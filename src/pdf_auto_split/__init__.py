@@ -25,11 +25,14 @@ DEFAULT_API_BASE = os.getenv("API_BASE", "http://localhost:8000/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen-2.5-vision-72b")
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", "30"))
 IMAGE_DPI = int(os.getenv("IMAGE_DPI", "150"))
+CONTEXT_PAGES = int(os.getenv("CONTEXT_PAGES", "3"))
 
 FAST_PATH_TEXT_REGIONS_BOTTOM = (0.8, 1.0)
 FAST_PATH_TEXT_REGIONS_TOP = (0.0, 0.2)
 
-DEFAULT_VISION_PROMPT = """Analyze these two consecutive document pages and determine if they are part of the same continuous document.
+DEFAULT_VISION_PROMPT = """Analyze these document pages and determine if the last page is part of the same continuous document as the preceding pages.
+
+The first {context_count} pages are believed to be from the same document. Is the last page part of the same document?
 
 Look for:
 - Consistent headers, footers, page numbers
@@ -69,6 +72,12 @@ def parse_args():
         type=int,
         default=IMAGE_DPI,
         help=f"Image resolution for vision model (default: {IMAGE_DPI})",
+    )
+    parser.add_argument(
+        "--context-pages",
+        type=int,
+        default=CONTEXT_PAGES,
+        help=f"Number of consecutive pages to show when asking about continuity (default: {CONTEXT_PAGES})",
     )
     parser.add_argument(
         "--prompt",
@@ -143,10 +152,9 @@ def render_page_to_base64_png(page, dpi) -> str:
     return base64.b64encode(pixmap.tobytes("png")).decode("utf-8")
 
 
-def call_vision_model(page_n, page_np1, api_base, dpi, prompt=None) -> VisionModelResponse:
+def call_vision_model(pages, api_base, dpi, prompt=None) -> VisionModelResponse:
     """Renders pages to images and calls vision model."""
-    img_n = render_page_to_base64_png(page_n, dpi)
-    img_np1 = render_page_to_base64_png(page_np1, dpi)
+    context_count = len(pages) - 1
 
     api_key = os.getenv("API_KEY", "") or None
     client_kwargs = {"base_url": api_base, "timeout": API_TIMEOUT}
@@ -158,24 +166,26 @@ def call_vision_model(page_n, page_np1, api_base, dpi, prompt=None) -> VisionMod
         env_prompt = os.getenv("VISION_PROMPT", "").strip()
         prompt = env_prompt if env_prompt else DEFAULT_VISION_PROMPT
 
+    # Use regex to replace only the exact {context_count} placeholder, avoiding issues
+    # with user's prompt containing JSON or other curly braces
+    final_prompt = re.sub(r'\{context_count\}', str(context_count), prompt)
+
     for attempt in range(2):
         try:
+            content_parts = [{"type": "text", "text": final_prompt}]
+            for page in pages:
+                img_b64 = render_page_to_base64_png(page, dpi)
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                })
+
             response = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[
                     {
                         "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{img_n}"},
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{img_np1}"},
-                            },
-                        ],
+                        "content": content_parts,
                     }
                 ],
             )
@@ -213,7 +223,7 @@ def call_vision_model(page_n, page_np1, api_base, dpi, prompt=None) -> VisionMod
     )
 
 
-def process_pdf(pdf_path, api_base, dpi, prompt=None):
+def process_pdf(pdf_path, api_base, dpi, prompt=None, context_pages=CONTEXT_PAGES):
     """Main processing loop returning list of boundary page numbers (1-indexed)."""
     doc = fitz.open(pdf_path)
     boundaries = []
@@ -222,23 +232,48 @@ def process_pdf(pdf_path, api_base, dpi, prompt=None):
         logging.info("PDF has fewer than 2 pages. Nothing to split.")
         return boundaries
 
-    for i in range(len(doc) - 1):
-        page_n = doc[i]
-        page_np1 = doc[i + 1]
+    context_pages = context_pages
+    window = [0]
 
-        if is_same_document_fast_path(page_n, page_np1):
-            logging.info(f"Page pair ({i+1}, {i+2}) via Fast Path → Same document: True")
-            continue
+    for i in range(1, len(doc)):
+        page_i = doc[i]
+        window_size = len(window)
 
-        logging.info(f"Page pair ({i+1}, {i+2}) via Slow Path")
-        result = call_vision_model(page_n, page_np1, api_base, dpi, prompt=prompt)
+        should_use_fast_path = (window_size == 1 and context_pages >= 2)
+        if should_use_fast_path:
+            page_prev = doc[window[0]]
+            if is_same_document_fast_path(page_prev, page_i):
+                logging.info(f"Page pair ({window[0]+1}, {i+1}) via Fast Path → Same document: True")
+                window.append(i)
+                continue
 
-        if result.same_document_confidence < 0:
-            boundaries.append(i + 2)
+        if window_size >= context_pages:
+            candidate_page = doc[window[-1]]
+            pages_to_send = [doc[p] for p in window[:-1]] + [candidate_page]
+            logging.info(f"Pages {window[0]+1}..{i+1} via Slow Path (context: {len(window)-1})")
+            result = call_vision_model(pages_to_send, api_base, dpi, prompt=prompt)
 
-        logging.info(
-            f"Page pair ({i+1}, {i+2}) → Same document confidence: {result.same_document_confidence}\n  Reasoning: {result.reasoning}"
-        )
+            if result.same_document_confidence < 0:
+                boundaries.append(i + 1)
+                window = [i]
+            else:
+                logging.info(
+                    f"Pages {window[0]+1}..{i+1} → Same document confidence: {result.same_document_confidence}\n  Reasoning: {result.reasoning}"
+                )
+                window.append(i)
+        else:
+            pages_to_send = [doc[p] for p in window] + [page_i]
+            logging.info(f"Pages {window[0]+1}..{i+1} via Slow Path (context: {len(window)})")
+            result = call_vision_model(pages_to_send, api_base, dpi, prompt=prompt)
+
+            if result.same_document_confidence < 0:
+                boundaries.append(i + 1)
+                window = [i]
+            else:
+                logging.info(
+                    f"Pages {window[0]+1}..{i+1} → Same document confidence: {result.same_document_confidence}\n  Reasoning: {result.reasoning}"
+                )
+                window.append(i)
 
     return boundaries
 
@@ -265,7 +300,7 @@ def main():
     elif args.prompt:
         prompt = args.prompt
 
-    boundaries = process_pdf(args.input_pdf, args.api_base, args.dpi, prompt=prompt)
+    boundaries = process_pdf(args.input_pdf, args.api_base, args.dpi, prompt=prompt, context_pages=args.context_pages)
 
     if not boundaries:
         logging.info("No document boundaries detected. Nothing to split.")
