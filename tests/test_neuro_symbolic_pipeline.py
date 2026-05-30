@@ -204,15 +204,17 @@ class TestProcessPdf:
                 assert mock_fp.call_count == 2
 
     def test_slow_path_called_when_fast_path_fails(self):
-        from file_organization import process_pdf
+        from file_organization import process_pdf, VisionModelResponse
 
         doc = fitz.open()
         for _ in range(2):
             page = doc.new_page()
 
+        mock_response = VisionModelResponse(is_same_document=False, confidence=90, reasoning="test")
+
         with patch("file_organization.fitz.open", return_value=doc):
             with patch("file_organization.is_same_document_fast_path", return_value=False):
                 with patch("file_organization.call_vision_model") as mock_slow:
-                    mock_slow.return_value = {"is_same_document": False, "confidence": 90}
+                    mock_slow.return_value = mock_response
                     boundaries = process_pdf("/fake.pdf", "http://localhost:8000/v1", 150)
                     mock_slow.assert_called_once()

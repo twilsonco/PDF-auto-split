@@ -14,13 +14,13 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 import fitz  # PyMuPDF
 from openai import OpenAI
 
 load_dotenv()
 
 DEFAULT_API_BASE = os.getenv("API_BASE", "http://localhost:8000/v1")
-DEFAULT_API_KEY = os.getenv("API_KEY", "")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen-2.5-vision-72b")
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", "30"))
 IMAGE_DPI = int(os.getenv("IMAGE_DPI", "150"))
@@ -42,6 +42,12 @@ Respond with JSON:
   "confidence": integer (0-100),
   "reasoning": "string explaining the decision"
 }"""
+
+
+class VisionModelResponse(BaseModel):
+    is_same_document: bool = Field(description="Whether the two pages are part of the same continuous document")
+    confidence: int = Field(ge=0, le=100, description="Confidence score from 0-100")
+    reasoning: str = Field(description="Explanation of the decision")
 
 
 def parse_args():
@@ -130,7 +136,7 @@ def render_page_to_base64_png(page, dpi) -> str:
     return base64.b64encode(pixmap.tobytes("png")).decode("utf-8")
 
 
-def call_vision_model(page_n, page_np1, api_base, dpi, prompt=None) -> dict:
+def call_vision_model(page_n, page_np1, api_base, dpi, prompt=None) -> VisionModelResponse:
     """Renders pages to images and calls vision model."""
     img_n = render_page_to_base64_png(page_n, dpi)
     img_np1 = render_page_to_base64_png(page_np1, dpi)
@@ -177,23 +183,24 @@ def call_vision_model(page_n, page_np1, api_base, dpi, prompt=None) -> dict:
             if content_clean.endswith("```"):
                 content_clean = content_clean[:-3]
 
-            result = json.loads(content_clean.strip())
-            return {
-                "is_same_document": bool(result.get("is_same_document")),
-                "confidence": int(result.get("confidence", 0)),
-                "reasoning": str(result.get("reasoning", "")),
-            }
+            parsed = json.loads(content_clean.strip())
+            return VisionModelResponse(**parsed)
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, Exception) as e:
             logging.warning(f"Malformed JSON response (attempt {attempt + 1}): {e}")
             if attempt == 1:
                 logging.error("API call failed after retries: malformed JSON")
-                return {"is_same_document": False, "confidence": 0, "reasoning": f"API error: {e}"}
-        except Exception as e:
-            logging.error(f"API call failed after retries: {e}")
-            return {"is_same_document": False, "confidence": 0, "reasoning": f"API error: {e}"}
+                return VisionModelResponse(
+                    is_same_document=False,
+                    confidence=0,
+                    reasoning=f"API error: {e}",
+                )
 
-    return {"is_same_document": False, "confidence": 0, "reasoning": "Max retries exceeded"}
+    return VisionModelResponse(
+        is_same_document=False,
+        confidence=0,
+        reasoning="Max retries exceeded",
+    )
 
 
 def process_pdf(pdf_path, api_base, dpi, prompt=None):
@@ -216,12 +223,12 @@ def process_pdf(pdf_path, api_base, dpi, prompt=None):
         logging.info(f"Page pair ({i+1}, {i+2}) via Slow Path")
         result = call_vision_model(page_n, page_np1, api_base, dpi, prompt=prompt)
 
-        if not result["is_same_document"]:
+        if not result.is_same_document:
             boundaries.append(i + 2)
 
         logging.info(
-            f"Page pair ({i+1}, {i+2}) → Same document: {result['is_same_document']} "
-            f"(confidence: {result.get('confidence', 'N/A')})"
+            f"Page pair ({i+1}, {i+2}) → Same document: {result.is_same_document} "
+            f"(confidence: {result.confidence})"
         )
 
     return boundaries
