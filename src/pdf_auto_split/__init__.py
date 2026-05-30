@@ -231,7 +231,7 @@ def process_pdf(pdf_path, api_base, dpi, prompt=None):
             boundaries.append(i + 2)
 
         logging.info(
-            f"Page pair ({i+1}, {i+2}) → Same document confidence: {result.same_document_confidence}"
+            f"Page pair ({i+1}, {i+2}) → Same document confidence: {result.same_document_confidence}\n  Reasoning: {result.reasoning}"
         )
 
     return boundaries

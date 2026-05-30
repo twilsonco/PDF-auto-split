@@ -64,7 +64,7 @@ if __name__ == "__main__":
         if not known and not detected:
             print("\n=== Accuracy Assessment ===")
             print("No boundaries in reference or results.")
-            return
+            sys.exit(0)
 
         true_positives = len(known & detected)
         false_positives = len(detected - known)
