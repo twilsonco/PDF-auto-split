@@ -112,8 +112,10 @@ def parse_args():
 
 
 def setup_logging():
+    log_level = os.getenv("LOG_LEVEL", "WARN").upper()
+    numeric_level = getattr(logging, log_level, logging.WARN)
     logging.basicConfig(
-        level=logging.INFO,
+        level=numeric_level,
         format="[%(levelname)s] %(message)s",
     )
 
@@ -156,6 +158,7 @@ def is_same_document_fast_path(page_n, page_np1) -> bool:
     embeddings = model.encode([text_n, text_np1], convert_to_numpy=True)
 
     similarity = compute_cosine_similarity(embeddings[0], embeddings[1])
+    logging.debug(f"Embedding similarity: {similarity:.3f} (threshold: {SIMILARITY_THRESHOLD})")
 
     return bool(similarity >= SIMILARITY_THRESHOLD)
 
@@ -258,34 +261,34 @@ def process_pdf(pdf_path, api_base, dpi, prompt=None, context_pages=CONTEXT_PAGE
         if should_use_fast_path:
             page_prev = doc[window[0]]
             if is_same_document_fast_path(page_prev, page_i):
-                logging.info(f"Page pair ({window[0]+1}, {i+1}) via Fast Path → Same document: True")
+                logging.debug(f"Page pair ({window[0]+1}, {i+1}) via Fast Path → Same document: True")
                 window.append(i)
                 continue
 
         if window_size >= context_pages:
             candidate_page = doc[window[-1]]
             pages_to_send = [doc[p] for p in window[:-1]] + [candidate_page]
-            logging.info(f"Pages {window[0]+1}..{i+1} via Slow Path (context: {len(window)-1})")
+            logging.debug(f"Pages {window[0]+1}..{i+1} via Slow Path (context: {len(window)-1})")
             result = call_vision_model(pages_to_send, api_base, dpi, prompt=prompt)
 
             if result.same_document_confidence < 0:
                 boundaries.append(i + 1)
                 window = [i]
             else:
-                logging.info(
+                logging.debug(
                     f"Pages {window[0]+1}..{i+1} → Same document confidence: {result.same_document_confidence}\n  Reasoning: {result.reasoning}"
                 )
                 window.append(i)
         else:
             pages_to_send = [doc[p] for p in window] + [page_i]
-            logging.info(f"Pages {window[0]+1}..{i+1} via Slow Path (context: {len(window)})")
+            logging.debug(f"Pages {window[0]+1}..{i+1} via Slow Path (context: {len(window)})")
             result = call_vision_model(pages_to_send, api_base, dpi, prompt=prompt)
 
             if result.same_document_confidence < 0:
                 boundaries.append(i + 1)
                 window = [i]
             else:
-                logging.info(
+                logging.debug(
                     f"Pages {window[0]+1}..{i+1} → Same document confidence: {result.same_document_confidence}\n  Reasoning: {result.reasoning}"
                 )
                 window.append(i)
