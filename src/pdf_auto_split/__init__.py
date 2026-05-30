@@ -18,6 +18,7 @@ from dotenv import find_dotenv, load_dotenv
 from pydantic import BaseModel, Field
 import fitz  # PyMuPDF
 from openai import OpenAI
+from sentence_transformers import SentenceTransformer
 
 load_dotenv(find_dotenv())
 
@@ -27,8 +28,16 @@ API_TIMEOUT = int(os.getenv("API_TIMEOUT", "30"))
 IMAGE_DPI = int(os.getenv("IMAGE_DPI", "150"))
 CONTEXT_PAGES = int(os.getenv("CONTEXT_PAGES", "3"))
 
-FAST_PATH_TEXT_REGIONS_BOTTOM = (0.8, 1.0)
-FAST_PATH_TEXT_REGIONS_TOP = (0.0, 0.2)
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.75"))
+
+_embedding_model = None
+
+def get_embedding_model():
+    global _embedding_model
+    if _embedding_model is None:
+        _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+    return _embedding_model
 
 DEFAULT_VISION_PROMPT = """Analyze these document pages and determine if the last page is part of the same continuous document as the preceding pages.
 
@@ -120,29 +129,35 @@ def extract_region_text(page, y_start_ratio, y_end_ratio):
     return page.get_text("text", clip=clip).strip()
 
 
+def extract_page_text(page) -> str:
+    """Extract full text content from a page."""
+    return page.get_text("text").strip()
+
+
+def compute_cosine_similarity(vec1, vec2):
+    """Compute cosine similarity between two vectors."""
+    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+    norm1 = sum(a * a for a in vec1) ** 0.5
+    norm2 = sum(b * b for b in vec2) ** 0.5
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return dot_product / (norm1 * norm2)
+
+
 def is_same_document_fast_path(page_n, page_np1) -> bool:
-    """Returns True if text suggests same document (no LLM needed)."""
-    bottom_text = extract_region_text(page_n, *FAST_PATH_TEXT_REGIONS_BOTTOM)
-    top_text = extract_region_text(page_np1, *FAST_PATH_TEXT_REGIONS_TOP)
+    """Returns True if embeddings suggest same document (no LLM needed)."""
+    text_n = extract_page_text(page_n)
+    text_np1 = extract_page_text(page_np1)
 
-    if not bottom_text and not top_text:
+    if not text_n or not text_np1:
         return False
 
-    has_ending_punctuation = any(
-        bottom_text.rstrip().endswith(p) for p in (".", "?", "!")
-    )
+    model = get_embedding_model()
+    embeddings = model.encode([text_n, text_np1], convert_to_numpy=True)
 
-    if has_ending_punctuation:
-        return False
+    similarity = compute_cosine_similarity(embeddings[0], embeddings[1])
 
-    top_text_stripped = top_text.lstrip()
-    starts_lowercase = top_text_stripped and top_text_stripped[0].islower()
-    common_continuations = ("the ", "a ", "an ", "and ", "or ", "but ", "to ", "of ", "in ", "on ", "that ", "which ", "who ", "whom ", "this ", "these ", "those ")
-    starts_with_continuation = any(
-        top_text_stripped.lower().startswith(c) for c in common_continuations
-    )
-
-    return starts_lowercase or starts_with_continuation
+    return bool(similarity >= SIMILARITY_THRESHOLD)
 
 
 def render_page_to_base64_png(page, dpi) -> str:

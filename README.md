@@ -28,6 +28,8 @@ cp .env.example .env  # or create manually
 | `MODEL_NAME` | Vision model name | `qwen-2.5-vision-72b` |
 | `API_TIMEOUT` | Request timeout (seconds) | `30` |
 | `IMAGE_DPI` | Page rendering resolution | `150` |
+| `EMBEDDING_MODEL` | Embedding model for fast path | `all-MiniLM-L6-v2` |
+| `SIMILARITY_THRESHOLD` | Min cosine similarity for same document | `0.75` |
 | `VISION_PROMPT` | Prompt for vision model analysis | (built-in default) |
 
 To customize the prompt, set `VISION_PROMPT` in `.env`. Use `\n` for newlines.
@@ -74,20 +76,21 @@ uv run python -m pdf_auto_split document.pdf --dry-run
 Input PDF → Page Iterator
               ↓
        [Fast Path Check]
-       - Extract bottom 20% text from page N
-       - Extract top 20% text from page N+1
-       - Heuristic: mid-sentence continuation?
+       - Extract full text from page N and N+1
+       - Encode using embedding model (all-MiniLM-L6-v2)
+       - Compute cosine similarity
+       - Same document if similarity >= threshold (0.75)
               ↓
-  ┌───────────┴───────────┐
-  │                       │
+   ┌───────────┴───────────┐
+   │                       │
 Pass                    Fail/Unclear
-  ↓                        ↓
+   ↓                        ↓
 Next Pair       [Slow Path - Vision LLM]
               - Render both pages as images (base64)
               - Call local vision model
-              - Parse JSON response {is_same_document, confidence}
+              - Parse JSON response {same_document_confidence, reasoning}
                    ↓
-          Record boundary if is_same_document=False
+          Record boundary if same_document_confidence < 0
               ↓
        Aggregate All Boundaries → subprocess call to split_PDF.py
 ```
