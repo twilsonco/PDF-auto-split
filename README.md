@@ -35,7 +35,7 @@ To customize the prompt, set `VISION_PROMPT` in `.env`. Use `\n` for newlines.
 ## Running
 
 ```bash
-uv run python -m file_organization <input_pdf> [--api-base URL] [--dpi N]
+uv run python -m pdf_auto_split <input_pdf> [--api-base URL] [--dpi N]
 ```
 
 ### Arguments
@@ -47,21 +47,25 @@ uv run python -m file_organization <input_pdf> [--api-base URL] [--dpi N]
 | `--dpi` | Image resolution for vision model | `.env` or `150` |
 | `--prompt` | Custom prompt string (overrides .env) | `.env` or built-in |
 | `--prompt-file` | Load prompt from file (overrides all) | none |
+| `--dry-run` | Analyze PDF and report boundaries without splitting | false |
 
 ### Example
 
 ```bash
 # Using defaults from .env
-uv run python -m file_organization document.pdf
+uv run python -m pdf_auto_split document.pdf
 
 # Custom API and higher resolution
-uv run python -m file_organization document.pdf --api-base http://localhost:9000/v1 --dpi 300
+uv run python -m pdf_auto_split document.pdf --api-base http://localhost:9000/v1 --dpi 300
 
 # Custom prompt from file
-uv run python -m file_organization document.pdf --prompt-file custom_prompt.txt
+uv run python -m pdf_auto_split document.pdf --prompt-file custom_prompt.txt
 
 # Inline custom prompt
-uv run python -m file_organization document.pdf --prompt "Your custom analysis instructions here"
+uv run python -m pdf_auto_split document.pdf --prompt "Your custom analysis instructions here"
+
+# Dry-run (analyze only, don't split)
+uv run python -m pdf_auto_split document.pdf --dry-run
 ```
 
 ## How It Works

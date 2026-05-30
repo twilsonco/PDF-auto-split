@@ -11,7 +11,7 @@ class TestExtractRegionText:
         page.rect.height = 100
         page.get_text.return_value = "middle text"
 
-        from file_organization import extract_region_text
+        from pdf_auto_split import extract_region_text
 
         result = extract_region_text(page, 0.4, 0.6)
         clip_arg = page.get_text.call_args[1]["clip"]
@@ -23,7 +23,7 @@ class TestExtractRegionText:
         page.rect.height = 100
         page.get_text.return_value = "bottom text"
 
-        from file_organization import extract_region_text
+        from pdf_auto_split import extract_region_text
 
         result = extract_region_text(page, 0.8, 1.0)
         clip_arg = page.get_text.call_args[1]["clip"]
@@ -45,7 +45,7 @@ class TestIsSameDocumentFastPath:
         page_n.get_text = mock_get_text
         page_np1.get_text = lambda mode, clip=None: "the story continues"
 
-        from file_organization import is_same_document_fast_path
+        from pdf_auto_split import is_same_document_fast_path
 
         result = is_same_document_fast_path(page_n, page_np1)
         assert result is True
@@ -63,7 +63,7 @@ class TestIsSameDocumentFastPath:
         page_n.get_text = mock_get_text
         page_np1.get_text = lambda mode, clip=None: "Chapter 2"
 
-        from file_organization import is_same_document_fast_path
+        from pdf_auto_split import is_same_document_fast_path
 
         result = is_same_document_fast_path(page_n, page_np1)
         assert result is False
@@ -81,7 +81,7 @@ class TestIsSameDocumentFastPath:
         page_n.get_text = mock_get_text
         page_np1.get_text = lambda mode, clip=None: "Chapter 2"
 
-        from file_organization import is_same_document_fast_path
+        from pdf_auto_split import is_same_document_fast_path
 
         result = is_same_document_fast_path(page_n, page_np1)
         assert result is False
@@ -96,7 +96,7 @@ class TestIsSameDocumentFastPath:
         page_n.get_text = mock_get_text
         page_np1.get_text = mock_get_text
 
-        from file_organization import is_same_document_fast_path
+        from pdf_auto_split import is_same_document_fast_path
 
         result = is_same_document_fast_path(page_n, page_np1)
         assert result is False
@@ -109,7 +109,7 @@ class TestRenderPageToBase64Png:
         pixmap_mock.tobytes.return_value = b"png_data"
         page.get_pixmap.return_value = pixmap_mock
 
-        from file_organization import render_page_to_base64_png
+        from pdf_auto_split import render_page_to_base64_png
 
         result = render_page_to_base64_png(page, 150)
         assert isinstance(result, str)
@@ -120,7 +120,7 @@ class TestRenderPageToBase64Png:
         pixmap_mock.tobytes.return_value = b"png_data"
         page.get_pixmap.return_value = pixmap_mock
 
-        from file_organization import render_page_to_base64_png, fitz
+        from pdf_auto_split import render_page_to_base64_png, fitz
 
         result = render_page_to_base64_png(page, 150)
         matrix_arg = page.get_pixmap.call_args[1]["matrix"]
@@ -130,28 +130,28 @@ class TestRenderPageToBase64Png:
 
 class TestParseArgs:
     def test_default_api_base(self):
-        from file_organization import parse_args, DEFAULT_API_BASE
+        from pdf_auto_split import parse_args, DEFAULT_API_BASE
 
         with patch("sys.argv", ["prog", "input.pdf"]):
             args = parse_args()
         assert args.api_base == DEFAULT_API_BASE
 
     def test_custom_api_base(self):
-        from file_organization import parse_args
+        from pdf_auto_split import parse_args
 
         with patch("sys.argv", ["prog", "--api-base", "http://custom:9000/v1", "input.pdf"]):
             args = parse_args()
         assert args.api_base == "http://custom:9000/v1"
 
     def test_custom_dpi(self):
-        from file_organization import parse_args
+        from pdf_auto_split import parse_args
 
         with patch("sys.argv", ["prog", "--dpi", "300", "input.pdf"]):
             args = parse_args()
         assert args.dpi == 300
 
     def test_default_dpi(self):
-        from file_organization import parse_args, IMAGE_DPI
+        from pdf_auto_split import parse_args, IMAGE_DPI
 
         with patch("sys.argv", ["prog", "input.pdf"]):
             args = parse_args()
@@ -159,9 +159,9 @@ class TestParseArgs:
 
 
 class TestExecuteSplit:
-    @patch("file_organization.subprocess.run")
+    @patch("pdf_auto_split.subprocess.run")
     def test_calls_split_pdf_with_boundaries(self, mock_run):
-        from file_organization import execute_split
+        from pdf_auto_split import execute_split
 
         execute_split("/path/to/file.pdf", [3, 8])
 
@@ -169,42 +169,42 @@ class TestExecuteSplit:
         call_args = mock_run.call_args[0][0]
         assert call_args == ["python", "ref/split_PDF.py", "/path/to/file.pdf", "3", "8"]
 
-    @patch("file_organization.subprocess.run")
+    @patch("pdf_auto_split.subprocess.run")
     def test_logs_command(self, mock_run):
-        from file_organization import execute_split
+        from pdf_auto_split import execute_split
         import logging
 
-        with patch("file_organization.logging") as mock_logging:
+        with patch("pdf_auto_split.logging") as mock_logging:
             execute_split("/path/to/file.pdf", [3, 8])
             mock_logging.info.assert_called()
 
 
 class TestProcessPdf:
     def test_single_page_pdf_returns_empty_boundaries(self):
-        from file_organization import process_pdf
+        from pdf_auto_split import process_pdf
 
         doc = fitz.open()
         doc.new_page()
 
-        with patch("file_organization.fitz.open", return_value=doc):
+        with patch("pdf_auto_split.fitz.open", return_value=doc):
             boundaries = process_pdf("/fake.pdf", "http://localhost:8000/v1", 150)
 
         assert boundaries == []
 
     def test_calls_fast_path_for_each_pair(self):
-        from file_organization import process_pdf
+        from pdf_auto_split import process_pdf
 
         doc = fitz.open()
         for _ in range(3):
             page = doc.new_page()
 
-        with patch("file_organization.fitz.open", return_value=doc):
-            with patch("file_organization.is_same_document_fast_path", return_value=True) as mock_fp:
+        with patch("pdf_auto_split.fitz.open", return_value=doc):
+            with patch("pdf_auto_split.is_same_document_fast_path", return_value=True) as mock_fp:
                 boundaries = process_pdf("/fake.pdf", "http://localhost:8000/v1", 150)
                 assert mock_fp.call_count == 2
 
     def test_slow_path_called_when_fast_path_fails(self):
-        from file_organization import process_pdf, VisionModelResponse
+        from pdf_auto_split import process_pdf, VisionModelResponse
 
         doc = fitz.open()
         for _ in range(2):
@@ -212,9 +212,9 @@ class TestProcessPdf:
 
         mock_response = VisionModelResponse(is_same_document=False, confidence=90, reasoning="test")
 
-        with patch("file_organization.fitz.open", return_value=doc):
-            with patch("file_organization.is_same_document_fast_path", return_value=False):
-                with patch("file_organization.call_vision_model") as mock_slow:
+        with patch("pdf_auto_split.fitz.open", return_value=doc):
+            with patch("pdf_auto_split.is_same_document_fast_path", return_value=False):
+                with patch("pdf_auto_split.call_vision_model") as mock_slow:
                     mock_slow.return_value = mock_response
                     boundaries = process_pdf("/fake.pdf", "http://localhost:8000/v1", 150)
                     mock_slow.assert_called_once()

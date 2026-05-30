@@ -80,6 +80,11 @@ def parse_args():
         help="Load vision model prompt from file (overrides --prompt and .env)",
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Analyze PDF and report boundaries without splitting",
+    )
+    parser.add_argument(
         "input_pdf",
         help="Path to the PDF file to process",
     )
@@ -262,7 +267,10 @@ def main():
         logging.info("No document boundaries detected. Nothing to split.")
         return
 
-    execute_split(args.input_pdf, boundaries)
+    if args.dry_run:
+        logging.info(f"[DRY RUN] Would split at boundaries: {boundaries}")
+    else:
+        execute_split(args.input_pdf, boundaries)
 
 
 if __name__ == "__main__":
