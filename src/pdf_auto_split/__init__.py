@@ -263,12 +263,14 @@ def main():
 
     if not boundaries:
         logging.info("No document boundaries detected. Nothing to split.")
-        return
+        return boundaries
 
     if args.dry_run:
         logging.info(f"[DRY RUN] Would split at boundaries: {boundaries}")
     else:
         execute_split(args.input_pdf, boundaries)
+
+    return boundaries
 
 
 if __name__ == "__main__":

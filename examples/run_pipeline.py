@@ -32,6 +32,12 @@ if __name__ == "__main__":
         help="Run in dry-run mode (analyze only, don't split)",
     )
     parser.add_argument(
+        "--known-boundaries",
+        type=str,
+        default=None,
+        help="Comma-separated known correct boundaries for accuracy assessment (e.g., '3,7,12')",
+    )
+    parser.add_argument(
         "extra_args",
         nargs="*",
         help="Extra arguments to pass through (use -- to separate)",
@@ -49,4 +55,31 @@ if __name__ == "__main__":
     cmd_args.extend(args.extra_args)
 
     sys.argv = cmd_args
-    main()
+    detected_boundaries = main()
+
+    if args.known_boundaries and detected_boundaries is not None:
+        known = set(int(x.strip()) for x in args.known_boundaries.split(","))
+        detected = set(detected_boundaries)
+
+        if not known and not detected:
+            print("\n=== Accuracy Assessment ===")
+            print("No boundaries in reference or results.")
+            return
+
+        true_positives = len(known & detected)
+        false_positives = len(detected - known)
+        false_negatives = len(known - detected)
+
+        precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
+        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+        print("\n=== Accuracy Assessment ===")
+        print(f"Known boundaries:     {sorted(known)}")
+        print(f"Detected boundaries:  {sorted(detected)}")
+        print(f"True positives:       {true_positives}")
+        print(f"False positives:      {false_positives}")
+        print(f"False negatives:      {false_negatives}")
+        print(f"Precision:            {precision:.2%}")
+        print(f"Recall:               {recall:.2%}")
+        print(f"F1 Score:             {f1:.2%}")
