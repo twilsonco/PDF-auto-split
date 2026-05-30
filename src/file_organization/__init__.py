@@ -6,39 +6,72 @@ Splits multi-document PDFs by combining fast text heuristics with vision LLM ana
 
 import argparse
 import base64
-import io
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
 import fitz  # PyMuPDF
 from openai import OpenAI
 
-DEFAULT_API_BASE = "http://localhost:8000/v1"
-API_MODEL = "qwen-2.5-vision-72b"
-API_TIMEOUT = 30
-IMAGE_DPI = 150
+load_dotenv()
+
+DEFAULT_API_BASE = os.getenv("API_BASE", "http://localhost:8000/v1")
+DEFAULT_API_KEY = os.getenv("API_KEY", "")
+MODEL_NAME = os.getenv("MODEL_NAME", "qwen-2.5-vision-72b")
+API_TIMEOUT = int(os.getenv("API_TIMEOUT", "30"))
+IMAGE_DPI = int(os.getenv("IMAGE_DPI", "150"))
 
 FAST_PATH_TEXT_REGIONS_BOTTOM = (0.8, 1.0)
 FAST_PATH_TEXT_REGIONS_TOP = (0.0, 0.2)
 
+DEFAULT_VISION_PROMPT = """Analyze these two consecutive document pages and determine if they are part of the same continuous document.
+
+Look for:
+- Consistent headers, footers, page numbers
+- Continued text flow across pages
+- Similar formatting and layout
+- Thematic continuity
+
+Respond with JSON:
+{
+  "is_same_document": boolean,
+  "confidence": integer (0-100),
+  "reasoning": "string explaining the decision"
+}"""
+
 
 def parse_args():
+    env_prompt = os.getenv("VISION_PROMPT", "").strip()
+    default_prompt_display = (env_prompt[:50] + "...") if len(env_prompt) > 50 else env_prompt
+
     parser = argparse.ArgumentParser(
         description="Split a multi-document PDF using fast heuristics and vision LLM analysis."
     )
     parser.add_argument(
         "--api-base",
         default=DEFAULT_API_BASE,
-        help=f"Override default API base URL (default: {DEFAULT_API_BASE})",
+        help=f"Override API base URL (default: {DEFAULT_API_BASE})",
     )
     parser.add_argument(
         "--dpi",
         type=int,
         default=IMAGE_DPI,
         help=f"Image resolution for vision model (default: {IMAGE_DPI})",
+    )
+    parser.add_argument(
+        "--prompt",
+        default=None,
+        help=f"Vision model prompt (default: from .env or built-in)",
+    )
+    parser.add_argument(
+        "--prompt-file",
+        type=Path,
+        default=None,
+        help="Load vision model prompt from file (overrides --prompt and .env)",
     )
     parser.add_argument(
         "input_pdf",
@@ -97,32 +130,25 @@ def render_page_to_base64_png(page, dpi) -> str:
     return base64.b64encode(pixmap.tobytes("png")).decode("utf-8")
 
 
-def call_vision_model(page_n, page_np1, api_base, dpi) -> dict:
+def call_vision_model(page_n, page_np1, api_base, dpi, prompt=None) -> dict:
     """Renders pages to images and calls vision model."""
     img_n = render_page_to_base64_png(page_n, dpi)
     img_np1 = render_page_to_base64_png(page_np1, dpi)
 
-    client = OpenAI(base_url=api_base, timeout=API_TIMEOUT)
+    api_key = os.getenv("API_KEY", "") or None
+    client_kwargs = {"base_url": api_base, "timeout": API_TIMEOUT}
+    if api_key:
+        client_kwargs["api_key"] = api_key
+    client = OpenAI(**client_kwargs)
 
-    prompt = """Analyze these two consecutive document pages and determine if they are part of the same continuous document.
-
-Look for:
-- Consistent headers, footers, page numbers
-- Continued text flow across pages
-- Similar formatting and layout
-- Thematic continuity
-
-Respond with JSON:
-{
-  "is_same_document": boolean,
-  "confidence": integer (0-100),
-  "reasoning": "string explaining the decision"
-}"""
+    if prompt is None:
+        env_prompt = os.getenv("VISION_PROMPT", "").strip()
+        prompt = env_prompt if env_prompt else DEFAULT_VISION_PROMPT
 
     for attempt in range(2):
         try:
             response = client.chat.completions.create(
-                model=API_MODEL,
+                model=MODEL_NAME,
                 messages=[
                     {
                         "role": "user",
@@ -170,7 +196,7 @@ Respond with JSON:
     return {"is_same_document": False, "confidence": 0, "reasoning": "Max retries exceeded"}
 
 
-def process_pdf(pdf_path, api_base, dpi):
+def process_pdf(pdf_path, api_base, dpi, prompt=None):
     """Main processing loop returning list of boundary page numbers (1-indexed)."""
     doc = fitz.open(pdf_path)
     boundaries = []
@@ -188,7 +214,7 @@ def process_pdf(pdf_path, api_base, dpi):
             continue
 
         logging.info(f"Page pair ({i+1}, {i+2}) via Slow Path")
-        result = call_vision_model(page_n, page_np1, api_base, dpi)
+        result = call_vision_model(page_n, page_np1, api_base, dpi, prompt=prompt)
 
         if not result["is_same_document"]:
             boundaries.append(i + 2)
@@ -216,7 +242,14 @@ def main():
         logging.error(f"Input PDF not found: {args.input_pdf}")
         sys.exit(1)
 
-    boundaries = process_pdf(args.input_pdf, args.api_base, args.dpi)
+    prompt = None
+    if args.prompt_file:
+        prompt = args.prompt_file.read_text().strip()
+        logging.info(f"Loaded custom prompt from {args.prompt_file}")
+    elif args.prompt:
+        prompt = args.prompt
+
+    boundaries = process_pdf(args.input_pdf, args.api_base, args.dpi, prompt=prompt)
 
     if not boundaries:
         logging.info("No document boundaries detected. Nothing to split.")
