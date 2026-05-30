@@ -8,6 +8,7 @@ import argparse
 import base64
 import json
 import logging
+import re
 import os
 import subprocess
 import sys
@@ -181,15 +182,20 @@ def call_vision_model(page_n, page_np1, api_base, dpi, prompt=None) -> VisionMod
             content = response.choices[0].message.content
             logging.debug(f"API response: {content}")
 
-            content_clean = content.strip()
-            if content_clean.startswith("```json"):
-                content_clean = content_clean[7:]
-            elif content_clean.startswith("```"):
-                content_clean = content_clean[3:]
-            if content_clean.endswith("```"):
-                content_clean = content_clean[:-3]
+            if content is None or content.strip() == "":
+                logging.warning(f"Empty response from API on attempt {attempt + 1}")
+                continue
 
-            parsed = json.loads(content_clean.strip())
+            content_clean = content.strip()
+            
+            json_match = re.search(r'```json\s*(\{[^}]+\})\s*```', content_clean, re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group(1))
+            else:
+                content_clean = re.sub(r'^```json\s*', '', content_clean)
+                content_clean = re.sub(r'\s*```$', '', content_clean)
+                parsed = json.loads(content_clean.strip())
+
             return VisionModelResponse(**parsed)
 
         except (json.JSONDecodeError, Exception) as e:
