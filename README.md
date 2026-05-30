@@ -103,3 +103,14 @@ document.pages008_015.pdf
 ```bash
 uv run pytest tests/ -v
 ```
+
+## Examples
+
+Place a multi-page PDF at `examples/demo.pdf` and run:
+
+```bash
+uv run python examples/run_pipeline.py
+
+# Or specify a different file:
+uv run python examples/run_pipeline.py --pdf /path/to/your/document.pdf
+```

@@ -13,12 +13,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from pydantic import BaseModel, Field
 import fitz  # PyMuPDF
 from openai import OpenAI
 
-load_dotenv()
+load_dotenv(find_dotenv())
 
 DEFAULT_API_BASE = os.getenv("API_BASE", "http://localhost:8000/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen-2.5-vision-72b")
