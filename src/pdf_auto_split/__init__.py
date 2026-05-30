@@ -38,15 +38,16 @@ Look for:
 
 Respond with JSON:
 {
-  "is_same_document": boolean,
-  "confidence": integer (0-100),
+  "same_document_confidence": integer (-100 to +100),
   "reasoning": "string explaining the decision"
 }"""
 
 
 class VisionModelResponse(BaseModel):
-    is_same_document: bool = Field(description="Whether the two pages are part of the same continuous document")
-    confidence: int = Field(ge=0, le=100, description="Confidence score from 0-100")
+    same_document_confidence: int = Field(
+        ge=-100, le=100,
+        description="Signed confidence from -100 (definitely different) to +100 (definitely same)"
+    )
     reasoning: str = Field(description="Explanation of the decision")
 
 
@@ -196,14 +197,12 @@ def call_vision_model(page_n, page_np1, api_base, dpi, prompt=None) -> VisionMod
             if attempt == 1:
                 logging.error("API call failed after retries: malformed JSON")
                 return VisionModelResponse(
-                    is_same_document=False,
-                    confidence=0,
+                    same_document_confidence=-100,
                     reasoning=f"API error: {e}",
                 )
 
     return VisionModelResponse(
-        is_same_document=False,
-        confidence=0,
+        same_document_confidence=-100,
         reasoning="Max retries exceeded",
     )
 
@@ -228,12 +227,11 @@ def process_pdf(pdf_path, api_base, dpi, prompt=None):
         logging.info(f"Page pair ({i+1}, {i+2}) via Slow Path")
         result = call_vision_model(page_n, page_np1, api_base, dpi, prompt=prompt)
 
-        if not result.is_same_document:
+        if result.same_document_confidence < 0:
             boundaries.append(i + 2)
 
         logging.info(
-            f"Page pair ({i+1}, {i+2}) → Same document: {result.is_same_document} "
-            f"(confidence: {result.confidence})"
+            f"Page pair ({i+1}, {i+2}) → Same document confidence: {result.same_document_confidence}"
         )
 
     return boundaries
